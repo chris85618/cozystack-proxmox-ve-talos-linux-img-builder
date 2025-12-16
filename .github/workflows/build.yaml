@@ -1,0 +1,83 @@
+name: Build Custom Cozystack Image
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+env:
+  COZYSTACK_IMAGE: ghcr.io/cozystack/cozystack/talos
+  QGA_EXTENSION: ghcr.io/siderolabs/qemu-guest-agent
+  CUSTOM_IMAGE: ghcr.io/${{ github.repository_owner }}/talos-qemu-guest-agent
+  GOOGLE_GO_CONTAINERREGISTRY_VERSION: v0.20.7
+  IMAGER_TAG: v1.10.8
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Skopeo & Imager Dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y skopeo jq curl && \
+          sudo rm -rf /var/lib/apt/lists/* && \
+          curl -sL "https://github.com/google/go-containerregistry/releases/download/${GOOGLE_GO_CONTAINERREGISTRY_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" | sudo tar -xz -C /usr/local/bin
+
+      - name: Get Latest Upstream Version
+        id: upstream
+        run: |
+          # Get Uptream Cozystack Tag
+          COZYSTACK_TAG=$(skopeo list-tags docker://${COZYSTACK_IMAGE} | jq -r '.Tags[]' | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
+          echo "latest_tag=$COZYSTACK_TAG" >> $GITHUB_OUTPUT
+          echo "Found upstream version: $COZYSTACK_TAG"
+          QGA_URL=$(crane export ghcr.io/siderolabs/extensions:${COZYSTACK_TAG} | tar x -O image-digests | grep --color=none ${QGA_EXTENSION})
+          echo "qga_url=$QGA_URL" >> $GITHUB_OUTPUT
+          echo "Found target Qemu guest Agent URL: $QGA_URL"
+          QGA_DIGEST=qga-$(echo ${QGA_URL} | sed "s/^.*$(echo ${QGA_EXTENSION} | sed 's:/:\\/:g'):\(v\?[0-9]\+\.[0-9]\+\.[0-9]\+\)@\([a-z0-9]\+\):\([a-f0-9]\{7\}\).*$/\1-\2-\3/g")
+          OUT_IMAGER_TAG=${COZYSTACK_TAG}-${QGA_DIGEST}
+          echo "output_image_tag=$OUT_IMAGER_TAG" >> $GITHUB_OUTPUT
+          echo "Output Image Tag: $OUT_IMAGER_TAG"
+
+      - name: Check if Image Exists
+        id: check
+        run: |
+          OUT_IMAGER_TAG=${{ steps.upstream.outputs.output_image_tag }}
+          if skopeo inspect docker://${CUSTOM_IMAGE}:${OUT_IMAGER_TAG} > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Image ${CUSTOM_IMAGE}:${OUT_IMAGER_TAG} already exists. Skipping build."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Image not found. Proceeding to build."
+          fi
+
+      - name: Build Custom Image
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          COZYSTACK_TAG=${{ steps.upstream.outputs.latest_tag }}
+          OUT_IMAGER_TAG=${{ steps.upstream.outputs.output_image_tag }}
+          QGA_URL=${{ steps.upstream.outputs.qga_url }}
+          echo "Building custom image for Talos $COZYSTACK_TAG..."
+          
+          docker run --rm --privileged \
+            -v /tmp:/out \
+            ghcr.io/siderolabs/imager:${IMAGER_TAG} installer \
+            --base-installer-image ${COZYSTACK_IMAGE}:${COZYSTACK_TAG} \
+            --system-extension-image ${QGA_URL} \
+            --output /out
+
+          # Push Image
+          echo "Target custom image tag: $OUT_IMAGER_TAG"
+          LOADED_IMAGE="$(docker load -i /tmp/installer-amd64.tar | sed 's/Loaded image ID: *//g' | sed 's/Loaded image: *//g')"
+          echo docker tag ${LOADED_IMAGE} ${CUSTOM_IMAGE}:${OUT_IMAGER_TAG}
+          docker tag ${LOADED_IMAGE} ${CUSTOM_IMAGE}:${OUT_IMAGER_TAG}
+          docker push ${CUSTOM_IMAGE}:${OUT_IMAGER_TAG}
