@@ -11,6 +11,7 @@ env:
   CUSTOM_IMAGE: ghcr.io/${{ github.repository_owner }}/talos-qemu-guest-agent
   GOOGLE_GO_CONTAINERREGISTRY_VERSION: v0.20.7
   IMAGER_TAG: v1.10.8
+  FORCE_UPDATE: true
 
 jobs:
   check-and-build:
@@ -69,12 +70,17 @@ jobs:
           OUT_IMAGER_TAG=${{ steps.upstream.outputs.output_image_tag }}
           QGA_URL=${{ steps.upstream.outputs.qga_url }}
           echo "Building custom image for Talos $COZYSTACK_TAG..."
-          
+
           docker run --rm --privileged \
             -v /tmp:/out \
             ghcr.io/siderolabs/imager:${IMAGER_TAG} installer \
             --base-installer-image ${COZYSTACK_IMAGE}:${COZYSTACK_TAG} \
             --system-extension-image ${QGA_URL} \
+            --extra-kernel-arg "console=ttyS0" \
+            --extra-kernel-arg "slab_nomerge" \
+            --extra-kernel-arg "pti=on" \
+            --extra-kernel-arg "zfs.zfs_arc_max=1073741824" \
+            --extra-kernel-arg "zfs.zfs_arc_min=268435456" \
             --output /out
 
           # Push Image
