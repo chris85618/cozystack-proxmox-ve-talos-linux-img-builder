@@ -64,7 +64,7 @@ jobs:
           fi
 
       - name: Build Custom Image
-        if: steps.check.outputs.exists == 'false'
+        if: env.FORCE_UPDATE == 'true' || steps.check.outputs.exists == 'false'
         run: |
           COZYSTACK_TAG=${{ steps.upstream.outputs.latest_tag }}
           OUT_IMAGER_TAG=${{ steps.upstream.outputs.output_image_tag }}
