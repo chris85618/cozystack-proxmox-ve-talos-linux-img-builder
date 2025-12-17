@@ -10,7 +10,6 @@ env:
   QGA_EXTENSION: ghcr.io/siderolabs/qemu-guest-agent
   CUSTOM_IMAGE: ghcr.io/${{ github.repository_owner }}/talos-qemu-guest-agent
   GOOGLE_GO_CONTAINERREGISTRY_VERSION: v0.20.7
-  IMAGER_TAG: v1.10.8
   FORCE_UPDATE: true
 
 jobs:
@@ -73,7 +72,7 @@ jobs:
 
           docker run --rm --privileged \
             -v /tmp:/out \
-            ghcr.io/siderolabs/imager:${IMAGER_TAG} installer \
+            ghcr.io/siderolabs/imager:${COZYSTACK_TAG} installer \
             --base-installer-image ${COZYSTACK_IMAGE}:${COZYSTACK_TAG} \
             --system-extension-image ${QGA_URL} \
             --extra-kernel-arg "console=ttyS0" \
